@@ -18,8 +18,8 @@ except ImportError as e:
 dotenv.load_dotenv()
 
 # Global variables
-engine: AsyncEngine | None = None
-AsyncSessionLocal: async_sessionmaker | None = None
+engine: AsyncEngine 
+AsyncSessionLocal: async_sessionmaker 
 
 async def init_postgres() -> None:
     """
