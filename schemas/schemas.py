@@ -1,144 +1,141 @@
 from sqlalchemy import (
-    Column, String, Boolean, DateTime, Date, Time,
-    ForeignKey, Integer, Enum, Numeric, Text, JSON, UniqueConstraint
+    String, Boolean, DateTime, Date, Time,
+    ForeignKey, Integer, Enum as SQLEnum,
+    Numeric, Text, JSON, UniqueConstraint
+)
+from sqlalchemy.orm import (
+    declarative_base, relationship, Mapped, mapped_column
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime,timezone
+from datetime import datetime, timezone
+from typing import List, Optional
 import uuid
-import enum
+
+from schemas.enum import (
+    GenderEnum,
+    DoctorCategoryEnum,
+    RoleEnum,
+    AppointmentStatus,
+    StripePaymentStatus
+)
 
 Base = declarative_base()
-
-class RoleEnum(str, enum.Enum):
-    PATIENT = "PATIENT"
-    DOCTOR = "DOCTOR"
-
-
-class AppointmentStatus(str, enum.Enum):
-    HOLD = "HOLD"
-    PAYMENT_PENDING = "PAYMENT_PENDING"
-    PAID = "PAID"
-    COMPLETED = "COMPLETED"
-    CANCELLED_BY_DOCTOR = "CANCELLED_BY_DOCTOR"
-    EXPIRED = "EXPIRED"
-
-
-class StripePaymentStatus(str, enum.Enum):
-    REQUIRES_PAYMENT_METHOD = "requires_payment_method"
-    PROCESSING = "processing"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-
-class DoctorCategoryEnum(str, enum.Enum):
-    FAMILY_PHYSICIAN = "Family Physician"
-    PEDIATRICIAN = "Pediatrician"
-    INTERNIST = "Internist"
-    GERIATRICIAN = "Geriatrician"
-
-    CARDIOLOGIST = "Cardiologist"
-    DERMATOLOGIST = "Dermatologist"
-    ENDOCRINOLOGIST = "Endocrinologist"
-    GASTROENTEROLOGIST = "Gastroenterologist"
-    NEUROLOGIST = "Neurologist"
-    ONCOLOGIST = "Oncologist"
-    OBSTETRICIAN_GYNECOLOGIST = "Obstetrician & Gynecologist"
-    PSYCHIATRIST = "Psychiatrist"
-    PULMONOLOGIST = "Pulmonologist"
-    RHEUMATOLOGIST = "Rheumatologist"
-    NEPHROLOGIST = "Nephrologist"
-    ALLERGIST_IMMUNOLOGIST = "Allergist / Immunologist"
-
-    GENERAL_SURGEON = "General Surgeon"
-    ORTHOPEDIC_SURGEON = "Orthopedic Surgeon"
-    NEUROSURGEON = "Neurosurgeon"
-    OPHTHALMOLOGIST = "Ophthalmologist"
-    ENT = "ENT (Otolaryngologist)"
-    UROLOGIST = "Urologist"
+utcnow = lambda: datetime.now(timezone.utc)
 
 class Role(Base):
     __tablename__ = "roles"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(Enum(RoleEnum), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    name: Mapped[RoleEnum] = mapped_column(
+        SQLEnum(RoleEnum, name="role_enum", native_enum=True),
+        unique=True,
+        nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), unique=True, nullable=False)
-    password_hash = Column(Text, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    profile_image_url = Column(Text)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
 
-    is_verified = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(100))
+    last_name: Mapped[Optional[str]] = mapped_column(String(100))
 
-    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc)
+    gender: Mapped[GenderEnum] = mapped_column(
+        SQLEnum(GenderEnum, name="gender_enum", native_enum=True),
+        nullable=False
     )
 
-    sessions = relationship("UserSession", back_populates="user")
+    profile_image_url: Mapped[Optional[str]] = mapped_column(Text)
+    date_of_birth: Mapped[Date] = mapped_column(Date, nullable=False)
+
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("roles.id"),
+        nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow
+    )
+
+    sessions: Mapped[List["UserSession"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    refresh_token_hash = Column(Text, nullable=False)
-
-    device_id = Column(String(255))
-    device_name = Column(String(255))
-    user_agent = Column(Text)
-
-    is_active = Column(Boolean, default=True)
-    last_used_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-
-    user = relationship("User", back_populates="sessions")
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "is_active", name="uq_active_session"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE")
     )
+
+    refresh_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    device_id: Mapped[Optional[str]] = mapped_column(String(255))
+    device_name: Mapped[Optional[str]] = mapped_column(String(255))
+    user_agent: Mapped[Optional[str]] = mapped_column(Text)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="sessions")
 
 class DoctorCategory(Base):
     __tablename__ = "doctor_categories"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(Enum(DoctorCategoryEnum), unique=True, nullable=False)
-    description = Column(Text)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    name: Mapped[DoctorCategoryEnum] = mapped_column(
+        SQLEnum(
+            DoctorCategoryEnum,
+            name="doctor_category_enum",
+            native_enum=True
+        ),
+        unique=True,
+        nullable=False
+    )
+
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
 class DoctorProfile(Base):
     __tablename__ = "doctor_profiles"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    qualifications = Column(JSON, nullable=False)
-    experience_years = Column(Integer)
-    consultation_fee = Column(Numeric(10, 2))
-    about = Column(Text)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        unique=True
     )
 
-    user = relationship("User")
-    categories = relationship(
-        "DoctorCategory",
+    qualifications: Mapped[dict] = mapped_column(JSON, nullable=False)
+    experience_years: Mapped[Optional[int]] = mapped_column(Integer)
+    consultation_fee: Mapped[Optional[float]] = mapped_column(Numeric(10, 2))
+    about: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    user: Mapped["User"] = relationship()
+    categories: Mapped[List["DoctorCategory"]] = relationship(
         secondary="doctor_category_map",
         backref="doctors"
     )
@@ -146,88 +143,45 @@ class DoctorProfile(Base):
 class DoctorCategoryMap(Base):
     __tablename__ = "doctor_category_map"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctor_profiles.id", ondelete="CASCADE"))
-    category_id = Column(UUID(as_uuid=True), ForeignKey("doctor_categories.id", ondelete="CASCADE"))
+    doctor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctor_profiles.id", ondelete="CASCADE")
+    )
+
+    category_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("doctor_categories.id", ondelete="CASCADE")
+    )
 
     __table_args__ = (
         UniqueConstraint("doctor_id", "category_id", name="uq_doctor_category"),
     )
 
-class EmailVerificationToken(Base):
-    __tablename__ = "email_verification_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-
-    token_hash = Column(Text, nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-
-    token_hash = Column(Text, nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-
-class DoctorAvailability(Base):
-    __tablename__ = "doctor_availability"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-
-    available_date = Column(Date, nullable=False)
-    start_time = Column(Time, nullable=False)
-    end_time = Column(Time, nullable=False)
-
-    break_start = Column(Time)
-    break_end = Column(Time)
-
-    slot_duration = Column(Integer, default=20)
-    is_active = Column(Boolean, default=True)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc)
-    )
-
-    __table_args__ = (
-        UniqueConstraint("doctor_id", "available_date", name="uq_doctor_date"),
-    )
-
 class Appointment(Base):
     __tablename__ = "appointments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
-    appointment_date = Column(Date, nullable=False)
-    start_time = Column(Time, nullable=False)
-    end_time = Column(Time, nullable=False)
+    appointment_date: Mapped[Date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[Time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[Time] = mapped_column(Time, nullable=False)
 
-    description = Column(Text)
-    report_urls = Column(JSON)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    report_urls: Mapped[Optional[dict]] = mapped_column(JSON)
 
-    status = Column(Enum(AppointmentStatus), nullable=False)
+    status: Mapped[AppointmentStatus] = mapped_column(
+        SQLEnum(AppointmentStatus, name="appointment_status_enum", native_enum=True),
+        nullable=False
+    )
 
-    lock_expires_at = Column(DateTime(timezone=True))
-    payment_intent_id = Column(String(255))
+    lock_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255))
 
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
         UniqueConstraint(
@@ -241,24 +195,25 @@ class Appointment(Base):
 class StripePayment(Base):
     __tablename__ = "stripe_payments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id", ondelete="CASCADE"))
-
-    stripe_payment_intent_id = Column(String(255), unique=True, nullable=False)
-    stripe_charge_id = Column(String(255))
-
-    amount = Column(Integer, nullable=False)
-    currency = Column(String(10), nullable=False)
-    payment_method_type = Column(String(50))
-
-    status = Column(Enum(StripePaymentStatus), nullable=False)
-    receipt_url = Column(Text)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
-    updated_at = Column(
-        DateTime(timezone=True),
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc)
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("appointments.id", ondelete="CASCADE")
     )
 
+    stripe_payment_intent_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    stripe_charge_id: Mapped[Optional[str]] = mapped_column(String(255))
+
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False)
+    payment_method_type: Mapped[Optional[str]] = mapped_column(String(50))
+
+    status: Mapped[StripePaymentStatus] = mapped_column(
+        SQLEnum(StripePaymentStatus, name="stripe_payment_status_enum", native_enum=True),
+        nullable=False
+    )
+
+    receipt_url: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

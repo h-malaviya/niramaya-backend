@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from database.postgres import init_postgres, close_postgres
 import uvicorn
-
+from api.v1.endpoints.auth import router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_postgres()
@@ -11,7 +11,7 @@ async def lifespan(app: FastAPI):
 
 
 app: FastAPI = FastAPI(lifespan=lifespan, title="Async FastAPI PostgreSQL Inventory Manager")
-
+app.include_router(router)
 
 @app.get('/')
 def hello():

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     AsyncEngine
 )
-
+from core.config import DATABASE_URL
 try:
     from schemas.schemas import Base
 except ImportError as e:
@@ -27,7 +27,7 @@ async def init_postgres() -> None:
     """
     global engine, AsyncSessionLocal
 
-    db_url = os.getenv("DATABASE_URL")
+    db_url = DATABASE_URL
     if not db_url:
         logger.error("DATABASE_URL not found in .env")
         raise ValueError("DATABASE_URL not set")
