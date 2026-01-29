@@ -11,6 +11,7 @@ class UserLogin(UserBase):
     email:EmailStr
     password: str
     device_id: Optional[str] = "unknown"
+    force:bool = False
 
 class UserSignup(UserBase):
     email: EmailStr
@@ -29,3 +30,10 @@ class DoctorSignup(BaseModel):
 class Token(BaseModel):
     access_token: str
     refresh_token: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

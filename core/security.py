@@ -15,14 +15,27 @@ def verify_password(plain_password: str, hashed_password) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
-def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta]  ) -> str:
+def create_access_token(
+    subject: Union[str, Any],
+    payload: dict,
+    expires_delta: Optional[timedelta]
+) -> str:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    
-    to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(to_encode, str(SECRET_KEY), algorithm=str(ALGORITHM))
+        expire = datetime.now(timezone.utc) + timedelta(minutes=int(ACCESS_TOKEN_EXPIRE_MINUTES))
+
+    to_encode = {
+        "sub": str(subject),
+        "exp": expire,
+        **payload
+    }
+
+    encoded_jwt = jwt.encode(
+        to_encode,
+        str(SECRET_KEY),
+        algorithm=str(ALGORITHM)
+    )
     return encoded_jwt
 
 def create_refresh_token() -> str:
@@ -32,3 +45,8 @@ def create_refresh_token() -> str:
 def hash_token(token: str) -> str:
     # We store the hash of the refresh token in the DB, not the raw token
     return hashlib.sha256(token.encode()).hexdigest()
+
+def generate_reset_token():
+    raw_token = secrets.token_urlsafe(48)
+    hashed = hashlib.sha256(raw_token.encode()).hexdigest()
+    return raw_token, hashed

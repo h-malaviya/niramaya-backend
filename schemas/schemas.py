@@ -7,7 +7,7 @@ from sqlalchemy.orm import (
     declarative_base, relationship, Mapped, mapped_column
 )
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone,date,time
 from typing import List, Optional
 import uuid
 
@@ -217,3 +217,118 @@ class StripePayment(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False
+    )
+
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False
+    )
+
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow
+    )
+
+    user: Mapped["User"] = relationship("User")
+
+class DoctorAvailability(Base):
+    __tablename__ = "doctor_availability"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    doctor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    available_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    break_start: Mapped[Optional[time]] = mapped_column(Time)
+    break_end: Mapped[Optional[time]] = mapped_column(Time)
+
+    slot_duration: Mapped[int] = mapped_column(
+        Integer,
+        default=20,
+        nullable=False
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "doctor_id",
+            "available_date",
+            name="uq_doctor_availability_date"
+        ),
+    )
+
+    doctor: Mapped["User"] = relationship("User")
