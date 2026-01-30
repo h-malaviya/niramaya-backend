@@ -1,20 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response,Cookie
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select,update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, update
 from datetime import datetime, timezone, timedelta
 from database.postgres import get_db
 from schemas.schemas import (
     User, Role, UserSession, DoctorProfile, 
-    DoctorCategory, DoctorCategoryMap, RoleEnum
+    DoctorCategory, DoctorCategoryMap, RoleEnum,PasswordResetToken
 )
-from schemas.auth_schema import UserSignup, UserLogin, Token,DoctorSignup
-from core.config import ACCESS_TOKEN_EXPIRE_MINUTES
+from schemas.auth_schema import UserSignup, UserLogin, Token,DoctorSignup,ForgotPasswordRequest,ResetPasswordRequest
+from core.config import ACCESS_TOKEN_EXPIRE_MINUTES,FRONTEND_URL
 from core.security import (
     get_password_hash, verify_password, 
-    create_access_token, create_refresh_token, hash_token
+    create_access_token, create_refresh_token, hash_token,generate_reset_token
 )
-
+import hashlib
+from core.mail import send_email
+import secrets
+from loguru import logger
 router = APIRouter(
     dependencies=[Depends(get_db)]
 )
@@ -23,47 +25,55 @@ async def create_tokens_for_user(
     user,
     db: AsyncSession,
     response: Response,
-    device_id: str | None = None
+    device_id: str | None = None,
+    force: bool = False
 ):
     device_id = device_id or "unknown"
-    print("\n\n\nUser: ",user)
-    # 1️⃣ Check for existing active session
+
+    # 🔍 Check existing session
     result = await db.execute(
         select(UserSession)
-        .where(
-            UserSession.user_id == user.id,
-            UserSession.is_active == True
-        )
+        .where(UserSession.user_id == user.id)
+        .where(UserSession.is_active == True)
     )
     active_session = result.scalars().first()
 
     if active_session:
-        # Same device already logged in
-        if active_session.device_id == device_id:
+        if not force:
             raise HTTPException(
                 status_code=409,
-                detail="This device is already logged in. Logout there first."
+                detail="User already logged in on another device"
             )
 
-        # Different device already logged in
-        raise HTTPException(
-            status_code=409,
-            detail="User is already logged in on another device. Logout there first."
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user.id)
+            .where(UserSession.is_active == True)
+            .values(is_active=False)
         )
+        await db.commit()
+    result = await db.execute(
+        select(Role).where(Role.id == user.role_id)
+    )
+    role = result.scalar_one()
 
-    # 2️⃣ Generate tokens
     access_token = create_access_token(
-        subject=str(user.id),
+        subject=user.id,
+        payload={
+            "role": role.name.value,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email
+        },
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    raw_refresh_token = create_refresh_token()
 
-    # 3️⃣ Create new active session (SAFE now)
+    refresh_token = create_refresh_token()
+
     db_session = UserSession(
         user_id=user.id,
-        refresh_token_hash=hash_token(raw_refresh_token),
+        refresh_token_hash=hash_token(refresh_token),
         device_id=device_id,
-        user_agent="FastAPI Client",
         is_active=True,
         last_used_at=datetime.now(timezone.utc)
     )
@@ -71,10 +81,9 @@ async def create_tokens_for_user(
     db.add(db_session)
     await db.commit()
 
-    # 4️⃣ Set Refresh Token in HTTPOnly Cookie
     response.set_cookie(
         key="refresh_token",
-        value=raw_refresh_token,
+        value=refresh_token,
         httponly=True,
         secure=True,
         samesite="lax"
@@ -82,9 +91,9 @@ async def create_tokens_for_user(
 
     return {
         "access_token": access_token,
-        "refresh_token": raw_refresh_token,
-        "token_type": "bearer"
+        "refresh_token": refresh_token
     }
+
 @router.post("/signup", response_model=Token)
 async def signup(
     user_in: UserSignup,
@@ -93,31 +102,40 @@ async def signup(
     db: AsyncSession = Depends(get_db)
 ):
     
-    # 1. Check email
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    if result.scalars().first():
-        raise HTTPException(status_code=400, detail="Email already registered")
+    existing_user = (
+        await db.execute(
+            select(User).where(User.email == user_in.email)
+        )
+    ).scalar_one_or_none()
 
-    # 2. Get Role
-    result = await db.execute(select(Role).where(Role.name == user_in.role))
-    role = result.scalars().first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+
+    role = (
+        await db.execute(
+            select(Role).where(Role.name == user_in.role)
+        )
+    ).scalar_one_or_none()
 
     if not role:
         role = Role(name=user_in.role)
         db.add(role)
-        await db.flush()
-
+        await db.flush()  
     if user_in.role == RoleEnum.PATIENT and doctor_data is not None:
         raise HTTPException(
             status_code=400,
             detail="Doctor details are not allowed for patient signup"
         )
+
     if user_in.role == RoleEnum.DOCTOR and not doctor_data:
         raise HTTPException(
             status_code=400,
             detail="Doctor details are required"
         )
-    # 3. Create User
+
     user = User(
         email=user_in.email,
         password_hash=get_password_hash(user_in.password),
@@ -127,30 +145,25 @@ async def signup(
         date_of_birth=user_in.date_of_birth,
         role_id=role.id
     )
-    print("\n\n\nUsers: ",user)
-   
-    # 4. Doctor-specific logic
-    if user_in.role == RoleEnum.DOCTOR:
 
-        if not doctor_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Doctor details are required"
-            )
-
+    db.add(user)
+    await db.flush()  
+    if user_in.role == RoleEnum.DOCTOR and doctor_data is not None:
         doctor = DoctorProfile(
             user_id=user.id,
             qualifications=doctor_data.qualifications,
             experience_years=doctor_data.experience_years
         )
         db.add(doctor)
-        await db.flush()
+        await db.flush()  
 
         for category_name in doctor_data.category_names:
-            result = await db.execute(
-                select(DoctorCategory).where(DoctorCategory.name == category_name)
-            )
-            category = result.scalars().first()
+            category = (
+                await db.execute(
+                    select(DoctorCategory)
+                    .where(DoctorCategory.name == category_name)
+                )
+            ).scalar_one_or_none()
 
             if not category:
                 raise HTTPException(
@@ -170,18 +183,27 @@ async def signup(
     return await create_tokens_for_user(user, db, response)
 
 @router.post("/login", response_model=Token)
-async def login(user_in: UserLogin, response: Response, db: AsyncSession = Depends(get_db)):
-    # Async query
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    user = result.scalars().first()
+async def login(
+    user_in: UserLogin,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    user = (
+        await db.execute(
+            select(User).where(User.email == user_in.email)
+        )
+    ).scalar_one_or_none()
 
     if not user or not verify_password(user_in.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
-    
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="User is inactive")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    return await create_tokens_for_user(user, db, response, user_in.device_id)
+    return await create_tokens_for_user(
+        user=user,
+        db=db,
+        response=response,
+        device_id=user_in.device_id,
+        force=user_in.force  
+    )
 
 @router.post("/refresh-token", response_model=Token)
 async def refresh_token(
@@ -198,13 +220,16 @@ async def refresh_token(
     result = await db.execute(
         select(UserSession).where(UserSession.refresh_token_hash == hashed_rt)
     )
-    session_entry = result.scalars().first()
+    session_entry = (await db.execute(
+    select(UserSession).where(
+        UserSession.refresh_token_hash == hashed_rt
+    )
+    )).scalar_one_or_none()
+
 
     if not session_entry or not session_entry.is_active:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
-    # Access related user explicitly (Lazy loading doesn't work well in async without options)
-    # We load the user based on the session's user_id
     result = await db.execute(select(User).where(User.id == session_entry.user_id))
     user = result.scalars().first()
     
@@ -219,7 +244,6 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(
-    response: Response,
     refresh_token: str ,
     db: AsyncSession = Depends(get_db)
 ):
@@ -230,7 +254,7 @@ async def logout(
         )
 
     hashed_token = hash_token(refresh_token)
-
+    logger.debug(f"\n\n\n\n Refresh hash {hashed_token}")
     # Find active session
     result = await db.execute(
         select(UserSession).where(
@@ -238,16 +262,133 @@ async def logout(
             UserSession.is_active == True
         )
     )
-    session = result.scalars().first()
+    sessions = result.scalars().all()
+    if not sessions:
+        logger.debug("no sessions")
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
 
-    if not session:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired session"
-        )
+    for session in sessions:
+        logger.debug("is session")
+        session.is_active = False
+        logger.debug("session ended")
 
-    # Invalidate session
-    session.is_active = False
     await db.commit()
 
     return {"message": "Logged out successfully"}
+
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    email = payload.email
+
+    user = (
+        await db.execute(
+            select(User).where(User.email == email)
+        )
+    ).scalar_one_or_none()
+
+    if not user:
+        return {"message": "If email exists, reset link sent"}
+
+    token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    reset_entry = PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+    )
+
+    db.add(reset_entry)
+    await db.commit()
+
+    reset_link = f"{FRONTEND_URL}/reset-password?token={token}"
+
+    send_email(
+        to_email=user.email,
+        subject="Reset Your Password",
+        html=f"""
+        <p>Click below to reset your password:</p>
+        <a href="{reset_link}">{reset_link}</a>
+        <p>This link expires in 15 minutes.</p>
+        """
+    )
+
+    return {"message": "Reset link sent"}
+
+@router.post("/reset-password")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    token = payload.token
+    new_password = payload.new_password
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    record = (
+        await db.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.used == False,
+                PasswordResetToken.expires_at > datetime.now(timezone.utc)
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not record:
+        raise HTTPException(400, "Invalid or expired token")
+
+    user = await db.get(User, record.user_id)
+
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    user.password_hash = get_password_hash(new_password)
+    record.used = True
+
+    await db.commit()
+
+    return {"message": "Password reset successful"}
+
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("refresh_token")
+
+@router.get("/validate")
+async def validate_session(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not refresh_token:
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    hashed_token = hash_token(refresh_token)
+
+    result = await db.execute(
+        select(UserSession)
+        .where(
+            UserSession.refresh_token_hash == hashed_token,
+            UserSession.is_active == True
+        )
+    )
+
+    session = result.scalar_one_or_none()
+
+    if not session:
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="Session expired")
+
+    # Optional: update last seen
+    session.last_used_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    user = await db.get(User, session.user_id)
+
+    return {
+        "authenticated": True,
+    }
