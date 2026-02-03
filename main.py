@@ -5,10 +5,10 @@ import uvicorn
 from api.v1.endpoints.auth import router as auth_router
 from api.v1.endpoints.file_upload import router as file_apload_router
 from api.v1.endpoints.profile import router as profile_router
+from api.v1.endpoints.doctor_availability import router as doctor_availability_router
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import FRONTEND_URL
 origins = [
-    "http://127.0.0.1:3000",
     FRONTEND_URL
 ]
 from core.middleware import AuthMiddleware
@@ -52,6 +52,7 @@ app: FastAPI = FastAPI(lifespan=lifespan, title="Niramaya ")
 app.include_router(auth_router)
 app.include_router(file_apload_router)
 app.include_router(profile_router)
+app.include_router(doctor_availability_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins, # type: ignore
