@@ -4,8 +4,10 @@ from jose import jwt
 from passlib.context import CryptContext
 import secrets
 import hashlib
-from core.config import SECRET_KEY,ALGORITHM,ACCESS_TOKEN_EXPIRE_MINUTES
+from core.config import JWT_SECRET_KEY,JWT_ALGORITHM,ACCESS_TOKEN_EXPIRE_MINUTES
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+security = HTTPBearer()
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -33,8 +35,8 @@ def create_access_token(
 
     encoded_jwt = jwt.encode(
         to_encode,
-        str(SECRET_KEY),
-        algorithm=str(ALGORITHM)
+        str(JWT_SECRET_KEY),
+        algorithm=str(JWT_ALGORITHM)
     )
     return encoded_jwt
 

@@ -2,8 +2,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-SECRET_KEY = os.getenv('SECRET_KEY')
-ALGORITHM = os.getenv('ALGORITHM')
+JWT_SECRET_KEY = str(os.getenv('JWT_SECRET_KEY'))
+JWT_ALGORITHM = str(os.getenv('JWT_ALGORITHM'))
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 DATABASE_URL=os.getenv('DATABASE_URL')
 FRONTEND_URL=os.getenv('FRONTEND_URL')

@@ -7,6 +7,7 @@ from schemas.schemas import (
     User, Role, UserSession, DoctorProfile, 
     DoctorCategory, DoctorCategoryMap, RoleEnum,PasswordResetToken
 )
+from datetime import date
 from schemas.auth_schema import UserSignup, UserLogin, Token,DoctorSignup,ForgotPasswordRequest,ResetPasswordRequest
 from core.config import ACCESS_TOKEN_EXPIRE_MINUTES,FRONTEND_URL
 from core.security import (
@@ -18,7 +19,8 @@ from core.mail import send_email
 import secrets
 from loguru import logger
 router = APIRouter(
-    dependencies=[Depends(get_db)]
+    # prefix='/auth',
+    dependencies=[Depends(get_db)],tags=['Auth']
 )
 
 async def create_tokens_for_user(
@@ -94,6 +96,9 @@ async def create_tokens_for_user(
         "refresh_token": refresh_token
     }
 
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("refresh_token")
+
 @router.post("/signup", response_model=Token)
 async def signup(
     user_in: UserSignup,
@@ -135,7 +140,19 @@ async def signup(
             status_code=400,
             detail="Doctor details are required"
         )
+    if not user_in.date_of_birth:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of birth is required"
+        )
 
+    today = date.today()
+
+    if user_in.date_of_birth > today:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of birth cannot be in the future"
+        )
     user = User(
         email=user_in.email,
         password_hash=get_password_hash(user_in.password),
@@ -326,7 +343,7 @@ async def reset_password(
     token = payload.token
     new_password = payload.new_password
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    record = (
+    record = (  
         await db.execute(
             select(PasswordResetToken).where(
                 PasswordResetToken.token_hash == token_hash,
@@ -350,10 +367,6 @@ async def reset_password(
     await db.commit()
 
     return {"message": "Password reset successful"}
-
-
-def clear_auth_cookies(response: Response):
-    response.delete_cookie("refresh_token")
 
 @router.get("/validate")
 async def validate_session(
