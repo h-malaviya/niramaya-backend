@@ -7,6 +7,7 @@ from schemas.schemas import (
     User, Role, UserSession, DoctorProfile, 
     DoctorCategory, DoctorCategoryMap, RoleEnum,PasswordResetToken
 )
+from datetime import date
 from schemas.auth_schema import UserSignup, UserLogin, Token,DoctorSignup,ForgotPasswordRequest,ResetPasswordRequest
 from core.config import ACCESS_TOKEN_EXPIRE_MINUTES,FRONTEND_URL
 from core.security import (
@@ -139,7 +140,19 @@ async def signup(
             status_code=400,
             detail="Doctor details are required"
         )
+    if not user_in.date_of_birth:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of birth is required"
+        )
 
+    today = date.today()
+
+    if user_in.date_of_birth > today:
+        raise HTTPException(
+            status_code=400,
+            detail="Date of birth cannot be in the future"
+        )
     user = User(
         email=user_in.email,
         password_hash=get_password_hash(user_in.password),
