@@ -53,7 +53,11 @@ class User(Base):
 
     profile_image_url: Mapped[Optional[str]] = mapped_column(Text)
     date_of_birth: Mapped[Date] = mapped_column(Date, nullable=False)
-
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20))
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    state: Mapped[Optional[str]] = mapped_column(String(100))
+    address: Mapped[Optional[str]] = mapped_column(Text)
+    country: Mapped[Optional[str]] = mapped_column(String(100))
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 

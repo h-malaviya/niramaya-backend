@@ -18,7 +18,8 @@ from core.mail import send_email
 import secrets
 from loguru import logger
 router = APIRouter(
-    dependencies=[Depends(get_db)]
+    # prefix='/auth',
+    dependencies=[Depends(get_db)],tags=['Auth']
 )
 
 async def create_tokens_for_user(
@@ -93,6 +94,9 @@ async def create_tokens_for_user(
         "access_token": access_token,
         "refresh_token": refresh_token
     }
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("refresh_token")
 
 @router.post("/signup", response_model=Token)
 async def signup(
@@ -326,7 +330,7 @@ async def reset_password(
     token = payload.token
     new_password = payload.new_password
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    record = (
+    record = (  
         await db.execute(
             select(PasswordResetToken).where(
                 PasswordResetToken.token_hash == token_hash,
@@ -350,10 +354,6 @@ async def reset_password(
     await db.commit()
 
     return {"message": "Password reset successful"}
-
-
-def clear_auth_cookies(response: Response):
-    response.delete_cookie("refresh_token")
 
 @router.get("/validate")
 async def validate_session(
