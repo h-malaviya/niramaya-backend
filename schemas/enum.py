@@ -15,6 +15,7 @@ class AppointmentStatus(str, enum.Enum):
     COMPLETED = "completed"
     CANCELLED_BY_DOCTOR = "cancelled_by_doctor"
     EXPIRED = "expired"
+    REQUESTED = "requested" 
 
 class StripePaymentStatus(str, enum.Enum):
     REQUIRES_PAYMENT_METHOD = "requires_payment_method"

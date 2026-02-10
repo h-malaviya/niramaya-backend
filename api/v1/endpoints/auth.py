@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response,Cookie
+from fastapi import APIRouter, Depends, HTTPException, Request, Response,Cookie,status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from datetime import datetime, timezone, timedelta
@@ -222,42 +222,66 @@ async def login(
         force=user_in.force  
     )
 
-@router.post("/refresh-token", response_model=Token)
+@router.post("/refresh-token")
 async def refresh_token(
     response: Response,
-    refresh_token: str, 
+    refresh_token: str | None = Cookie(None),
     db: AsyncSession = Depends(get_db)
 ):
     if not refresh_token:
-        raise HTTPException(status_code=401, detail="Refresh token missing")
+        raise HTTPException(401, "Refresh token missing")
 
     hashed_rt = hash_token(refresh_token)
-    
-    # Find session (Async)
-    result = await db.execute(
-        select(UserSession).where(UserSession.refresh_token_hash == hashed_rt)
-    )
-    session_entry = (await db.execute(
-    select(UserSession).where(
-        UserSession.refresh_token_hash == hashed_rt
-    )
-    )).scalar_one_or_none()
 
+    session_entry = (
+        await db.execute(
+            select(UserSession).where(
+                UserSession.refresh_token_hash == hashed_rt,
+                UserSession.is_active == True
+            )
+        )
+    ).scalar_one_or_none()
 
-    if not session_entry or not session_entry.is_active:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    if not session_entry:
+        raise HTTPException(400, "Invalid or expired refresh token")
 
-    result = await db.execute(select(User).where(User.id == session_entry.user_id))
-    user = result.scalars().first()
-    
+    user = await db.get(User, session_entry.user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Rotation: Mark old inactive
-    session_entry.is_active = False 
-    
-    # Generate new pair
-    return await create_tokens_for_user(user, db, response, session_entry.device_id)
+    role = (await db.execute(select(Role).where(Role.id == user.role_id))).scalar_one()
+
+    access_token = create_access_token(
+        subject=user.id,
+        payload={
+            "role": role.name.value,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+        },
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES) 
+    )
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
+
+    response.set_cookie(
+        key="role",
+        value=role.name.value,
+        httponly=False,
+        samesite="lax",
+        secure=False
+    )
+
+    session_entry.last_used_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"access_token": access_token}
 
 @router.post("/logout")
 async def logout(
@@ -307,7 +331,10 @@ async def forgot_password(
     ).scalar_one_or_none()
 
     if not user:
-        return {"message": "If email exists, reset link sent"}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User with this email does not exist"
+        )
 
     token = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(token.encode()).hexdigest()

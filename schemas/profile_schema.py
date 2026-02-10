@@ -1,7 +1,9 @@
+import uuid
+from fastapi import Form
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
-from datetime import date
+from datetime import date, time
 from schemas.enum import DoctorCategoryEnum
 from schemas.schemas import DoctorProfile
 class BaseProfileDTO(BaseModel):
@@ -63,3 +65,21 @@ class DoctorProfileResponse(DoctorProfileBase):
 class ProfileResponse(BaseModel):
     user: UserProfileResponse
     doctor_profile: Optional[DoctorProfileResponse] = None
+
+import uuid
+from datetime import date, time
+from fastapi import Form
+
+class HoldAppointmentForm:
+    def __init__(
+        self,
+        doctor_id: uuid.UUID = Form(...),
+        appointment_date: date = Form(...),
+        start_time: time = Form(...),
+        end_time: time = Form(...),
+    ):
+        self.doctor_id = doctor_id
+        self.appointment_date = appointment_date
+        self.start_time = start_time
+        self.end_time = end_time
+
