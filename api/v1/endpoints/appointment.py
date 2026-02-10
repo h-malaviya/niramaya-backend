@@ -270,8 +270,8 @@ async def doctor_accept(
                 "quantity": 1,
             }],
             metadata={"appointment_id": str(appointment_id)},
-            success_url=f"{FRONTEND_URL}/payment/success/{appointment_id}",
-            cancel_url=f"{FRONTEND_URL}/payment/failure/{appointment_id}",
+            success_url=f"{FRONTEND_URL}/patient/appointments/payments/success/{appointment_id}",
+            cancel_url=f"{FRONTEND_URL}/patient/appointments/payments/failure/{appointment_id}",
         )
     except Exception as e:
         raise HTTPException(500, f"Stripe error: {str(e)}")
@@ -325,8 +325,6 @@ async def confirm_payment(
     if not appt or appt.patient_id != current_user.id:
         raise HTTPException(404, "Appointment not found")
 
-    if appt.status != AppointmentStatus.PAYMENT_PENDING:
-        raise HTTPException(400, "Invalid appointment state")
 
     if not appt.payment_session_id:
         raise HTTPException(404, "Payment session not found")
