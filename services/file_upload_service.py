@@ -65,3 +65,4 @@ async def upload_pdf(file, folder: str):
         "url": result["secure_url"],
         "public_id": result["public_id"]
     }
+

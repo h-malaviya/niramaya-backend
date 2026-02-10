@@ -1,7 +1,7 @@
 from sqlalchemy import (
-    String, Boolean, DateTime, Date, Time,
+    Index, String, Boolean, DateTime, Date, Time,
     ForeignKey, Integer, Enum as SQLEnum,
-    Numeric, Text, JSON, UniqueConstraint
+    Numeric, Text, JSON, UniqueConstraint, text
 )
 from sqlalchemy.orm import (
     declarative_base, relationship, Mapped, mapped_column
@@ -174,7 +174,7 @@ class Appointment(Base):
     end_time: Mapped[Time] = mapped_column(Time, nullable=False)
 
     description: Mapped[Optional[str]] = mapped_column(Text)
-    report_urls: Mapped[Optional[dict]] = mapped_column(JSON)
+    report_urls: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
 
     status: Mapped[AppointmentStatus] = mapped_column(
         SQLEnum(AppointmentStatus, name="appointment_status_enum", native_enum=True),
@@ -182,17 +182,21 @@ class Appointment(Base):
     )
 
     lock_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255))
+    payment_session_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        UniqueConstraint(
+         Index(
+            "uq_doctor_slot_active",
             "doctor_id",
             "appointment_date",
             "start_time",
-            name="uq_doctor_slot"
+            unique=True,
+            postgresql_where=text(
+                "status IN ('HOLD', 'PAYMENT_PENDING', 'PAID', 'COMPLETED')"
+            ),
         ),
     )
 
@@ -205,7 +209,7 @@ class StripePayment(Base):
         ForeignKey("appointments.id", ondelete="CASCADE")
     )
 
-    stripe_payment_intent_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    stripe_payment_session_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     stripe_charge_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -218,7 +222,6 @@ class StripePayment(Base):
     )
 
     receipt_url: Mapped[Optional[str]] = mapped_column(Text)
-
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
