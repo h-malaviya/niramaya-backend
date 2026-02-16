@@ -9,6 +9,7 @@ from core.config import FRONTEND_URL
 from core.mail import send_email
 from database.postgres import get_db
 from dependencies.auth import get_current_user
+from schemas.appointments import DirectBookDTO
 from schemas.enum import StripePaymentStatus
 from schemas.profile_schema import HoldAppointmentForm
 from schemas.schemas import Appointment, AppointmentStatus, DoctorProfile, StripePayment, User
@@ -499,4 +500,65 @@ async def get_pending_payments(
         })
 
     return results
+
+@router.post("/direct-book")
+async def direct_book_appointment(
+    payload: DirectBookDTO,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "patient":
+        raise HTTPException(403, "Only patients can book")
+
+    # 1️⃣ Prevent past booking
+    if payload.appointment_date < date.today():
+        raise HTTPException(400, "Cannot book past date")
+
+    # 2️⃣ Check availability
+    availability = await ensure_availability(
+        db,
+        payload.doctor_id,
+        payload.appointment_date
+    )
+
+    if not availability or not availability.is_active:
+        raise HTTPException(400, "Doctor not available")
+
+    # 3️⃣ Validate slot
+    valid_slots = generate_slots(
+        availability.start_time,
+        availability.end_time,
+        availability.slot_duration,
+        availability.break_start,
+        availability.break_end
+    )
+
+    if (payload.start_time, payload.end_time) not in valid_slots:
+        raise HTTPException(400, "Invalid slot")
+
+    # 4️⃣ Create appointment directly
+    appointment = Appointment(
+        patient_id=current_user.id,
+        doctor_id=payload.doctor_id,
+        appointment_date=payload.appointment_date,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        status=AppointmentStatus.PAID,  # or CONFIRMED
+        lock_expires_at=None
+    )
+
+    try:
+        db.add(appointment)
+        await db.commit()
+        await db.refresh(appointment)
+
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Slot already booked")
+
+    return {
+        "appointment_id": str(appointment.id),
+        "status": appointment.status,
+        "message": "Appointment booked successfully"
+    }
 
