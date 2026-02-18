@@ -8,6 +8,7 @@ from api.v1.endpoints.profile import router as profile_router
 from api.v1.endpoints.appointment import router as appointment_router
 from api.v1.endpoints.doctor import router as doctor_router
 from api.v1.endpoints.patient import router as patient_router
+from api.v1.endpoints.chat import router as chat_router
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import FRONTEND_URL
 origins = [
@@ -15,7 +16,11 @@ origins = [
 ]
 from core.middleware import AuthMiddleware
 from fastapi.openapi.utils import get_openapi
+import os
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from services.chat_graph import build_graph
 
+SQLITE_PATH = os.getenv("LANGGRAPH_SQLITE_PATH", "chat_memory.db")
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -46,7 +51,10 @@ def custom_openapi():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_postgres()
-    yield
+    async with AsyncSqliteSaver.from_conn_string(SQLITE_PATH) as checkpointer:
+        app.state.chat_graph = build_graph(checkpointer)
+        yield       
+    app.state.chat_graph = None
     await close_postgres()
 
 
@@ -55,6 +63,7 @@ app.include_router(auth_router)
 app.include_router(file_apload_router)
 app.include_router(profile_router)
 app.include_router(appointment_router)
+app.include_router(chat_router)
 app.include_router(doctor_router)
 app.include_router(patient_router)
 app.add_middleware(
