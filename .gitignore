@@ -1,3 +1,4 @@
 .env
 __pycache__
 uv.lock
+chat_memory.db
