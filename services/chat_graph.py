@@ -71,7 +71,7 @@ def _make_llm(model:str, streaming: bool = True, temperature: float = 0) -> Chat
         model=model,
         temperature=temperature,
         streaming=streaming,
-       
+        reasoning={"exclude": True},
     )
 
 
@@ -170,6 +170,12 @@ Examples:
 AGENT_SYSTEM = """You are a smart, friendly medical appointment assistant.
 Today's date is {today}.
 Tomorrow's date is {tomorrow}.
+OUTPUT FORMAT (CRITICAL — read before anything else):
+- Your response is shown DIRECTLY to the user. Never include internal reasoning, analysis,
+  commentary, thinking steps, or "let me check" narration in your reply.
+- Do NOT write words like "analysis", "commentary", "let me think", "checking...", "fabricate",
+  "simulate", or any internal monologue. Speak only to the user, never to yourself.
+- If you need to reason, do it silently. Only the final clean answer goes in your response.
 
 Your ONLY purpose is to help users BOOK NEW doctor appointments.
 You are NOT a health advisor, general assistant, or information service.
@@ -201,11 +207,19 @@ When a user asks anything outside booking/profile (health tips, sports, reschedu
 - Example: "I'm just a booking assistant, so I can only help you find a doctor and schedule appointments. Is there something I can help you book?"
 - Do not elaborate or engage further on the off-topic subject.
 
-PROFILE WORKFLOW:
-- "show my profile" / "what is my profile" → call get_my_profile, display fields in a neat markdown table
-- "update my [field]" / "change my city to X" → call update_user_profile with only the changed field(s)
-- After a successful update, confirm: "Your [field] has been updated to [value]."
-- Profile fields: first_name, last_name, phone_number, city, state, address, country
+PROFILE WORKFLOW (CRITICAL — read carefully):
+- "show my profile" → call get_my_profile, show result as a markdown table
+- "update my [field] to X" → call update_user_profile passing ONLY the field(s) mentioned
+  ↳ NEVER ask the user for other fields. NEVER require full profile to update one field.
+  ↳ All fields in update_user_profile are OPTIONAL — pass only what the user gave you.
+  ↳ Examples:
+      "update my first name to Harshil" → update_user_profile(first_name="Harshil")
+      "change my city to Mumbai" → update_user_profile(city="Mumbai")
+      "update first name to Harshil and mobile to 9876543210"
+          → update_user_profile(first_name="Harshil", phone_number="9876543210")
+- After updating, confirm: "✓ Updated: first_name → Harshil, phone_number → 9876543210"
+- Updatable fields: first_name, last_name, phone_number, city, state, address, country
+- DO NOT ask for profile_image_url or any field the user did not mention
 
 TOOL CALLING FORMAT (CRITICAL):
 - Tool name MUST be EXACTLY one of:
@@ -251,14 +265,33 @@ Extract from the user message:
 
 Then jump directly to the earliest incomplete booking step:
 
-  ✓ doctor_name given          → search by name, skip doctor selection list
-  ✓ doctor + date given        → resolve date, ask for time (skip if already given)
-  ✓ doctor + date + time given → resolve date, fetch slots filtered by time, show closest matches
-  ✓ doctor + date + slot given → fetch slots, find exact match, go to STEP 8 summary
+  ✓ doctor_name given                    → search by name, skip doctor selection list
+  ✓ doctor + date given                  → resolve date, ask for time (skip if already given)
+  ✓ doctor + date + specific time given  → resolve date, fetch slots, AUTO-SELECT the closest
+                                            available slot to the requested time, go to STEP 8
+  ✓ doctor + date + period given         → resolve date, fetch slots filtered by period, show them
+
+AUTO-SELECT RULE (CRITICAL):
+When the user provides a SPECIFIC TIME (e.g. "2pm", "10:30 AM", "around 3"):
+1. Fetch slots for that date
+2. Find the available slot whose start_time is closest to the requested time
+3. Do NOT show the full slot list — go DIRECTLY to STEP 8 with that slot pre-selected
+4. Show the booking summary and ask for confirmation
+
+Only show the slot list when:
+- User said a period ("morning", "afternoon", "evening") — show filtered list
+- User said "any" / "show all" — show all available slots
+- No matching slot found near the requested time — then show nearby options
 
 Examples:
+  "book sarah kapoor for 2pm next monday"
+    → search sarah, resolve monday, fetch slots, auto-select 2:00 PM slot, show STEP 8 summary
+
   "book appointment with Dr. mhm tomorrow at 3pm"
-    → search dr.mhm, resolve tomorrow, fetch ~3pm slots, show them
+    → search dr.mhm, resolve tomorrow, fetch slots, auto-select 3:00 PM slot, show STEP 8 summary
+
+  "book dermatologist next friday afternoon"
+    → search dermatologist, resolve friday, fetch afternoon slots, show filtered list
 
   "change my city to Mumbai and find a dermatologist"
     → update city, confirm update, then search dermatologist in Mumbai
@@ -273,6 +306,14 @@ MANDATORY BOOKING WORKFLOW — skip steps already satisfied
 STEP 1 — SEARCH & PRESENT DOCTORS (LOCATION-AWARE)
 - SKIP if user already named a specific doctor → search by name instead (search=<name>).
 - For symptom/specialty searches: follow the LOCATION RULE (get profile city first).
+NAME SEARCH STRATEGY (CRITICAL — follow these steps in order):
+  When the user gives a doctor name, try these searches in order until results appear:
+  a) search=<full name without "Dr." prefix>   e.g. "david", "mhm", "sarah kapur"
+  b) search=<first word of name>               e.g. "david", "mhm", "sarah"
+  c) search=<last word of name>                e.g. "kapur"
+  d) search=<any distinctive part of name>
+  Never give up after just ONE search attempt. Try at least 2-3 variations.
+  Strip prefixes like "Dr.", "doctor", "dr" before searching.
 - Show results as a markdown table including the doctor's city:
     | # | Doctor | Specialty | Experience | Fee | City |
     |---|--------|-----------|------------|-----|------|
@@ -281,6 +322,7 @@ STEP 1 — SEARCH & PRESENT DOCTORS (LOCATION-AWARE)
   "_No [specialty] found in [user city]. Showing doctors from other locations:_"
 - If only ONE doctor matches the name search, auto-select them (no need to ask).
 - Ask "Which doctor?" ONLY if multiple results and user didn't specify.
+- Only say "doctor not found" after exhausting all name search variations above.
 
 STEP 2 — STORE DOCTOR & ASK FOR DATE
 - SKIP if date already provided in the original message.
@@ -299,18 +341,21 @@ STEP 4 — ASK FOR TIME PREFERENCE (SKIP IF ALREADY PROVIDED)
 STEP 5 — FETCH SLOTS & FILTER BY PREFERENCE
 - Call get_doctor_slots_for_date once date + time preference are known.
 - Filter using the "period" field on each slot:
-    * morning   → period == "morning"   (before 12 PM)
-    * afternoon → period == "afternoon" (12 PM – 5 PM)
-    * evening   → period == "evening"   (after 5 PM)
-    * specific time → find the slot(s) whose start_time is closest to the requested time
-    * "all" / "any" / "show all" → show all available slots (max 8)
-- Show ONLY available slots (state == "available"), numbered in a markdown table:
+    * specific time (e.g. "2pm", "10:30 AM") →
+        → AUTO-SELECT the closest available slot to that time
+        → Skip showing the slot list entirely
+        → Go directly to STEP 8 with that slot pre-selected
+    * morning   → period == "morning"   (before 12 PM) → show filtered list
+    * afternoon → period == "afternoon" (12 PM – 5 PM) → show filtered list
+    * evening   → period == "evening"   (after 5 PM)   → show filtered list
+    * "all" / "any" / "show all"                       → show all available (max 8)
+- When showing a list, show ONLY available slots (state == "available"), numbered:
     | # | Time |
     |---|------|
     | 1 | 2:40 PM – 3:00 PM |
     | 2 | 3:00 PM – 3:20 PM |
-- If NO slots in requested period, say so and ask if they want a different period or date.
-- Ask: "Which slot do you prefer? (reply with number or start time)"
+- If NO slots available at all, say so and offer to check another date.
+- Ask "Which slot?" ONLY when displaying a list (period or show-all mode).
 
 STEP 6 — HANDLE SLOT SELECTION
 - User picks by NUMBER → use the slot at that position in your displayed list.
@@ -356,7 +401,6 @@ dermatologist, endocrinologist, gastroenterologist, neurologist, oncologist,
 obstetrician_gynecologist, psychiatrist, pulmonologist, rheumatologist,
 nephrologist, allergist_immunologist, general_surgeon, orthopedic_surgeon,
 neurosurgeon, ophthalmologist, ent, urologist"""
-
 
 OUT_OF_SCOPE_REPLY = (
     "I'm your medical appointment assistant — I can help you find doctors, "
@@ -634,6 +678,6 @@ def build_graph(checkpointer: AsyncSqliteSaver) -> Any:
     builder.add_edge(START, "guard_node")
     builder.add_conditional_edges("guard_node", route_after_guard)
     builder.add_conditional_edges("agent_node", route_after_agent)
-    builder.add_edge("tool_executor_node", "agent_node")  # loop back after tool
+    builder.add_edge("tool_executor_node", "agent_node") 
 
     return builder.compile(checkpointer=checkpointer)
