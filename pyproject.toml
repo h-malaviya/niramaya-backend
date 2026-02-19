@@ -17,6 +17,7 @@ dependencies = [
     "langchain-openrouter>=0.0.2",
     "langgraph>=1.0.8",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "langgraph-cli>=0.4.12",
     "loguru==0.7.3",
     "passlib[bcrypt]==1.7.4",
     "pikepdf==10.2.0",
